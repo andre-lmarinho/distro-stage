@@ -1,0 +1,58 @@
+FROM debian:bookworm-slim
+
+# Only what renders the application: window manager, settings daemon,
+# panel with its integrated systray, and the VNC/noVNC transport.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        dbus-x11 \
+        fonts-dejavu-core \
+        netsurf-gtk \
+        nodejs \
+        novnc \
+        php-cli \
+        tigervnc-standalone-server \
+        websockify \
+        xfce4-panel \
+        xfce4-settings \
+        xfconf \
+        xfwm4 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --shell /bin/bash preview
+RUN install -d -o preview -g preview -m 700 /home/preview/.run \
+    && install -d -m 1777 /tmp/.ICE-unix /tmp/.X11-unix
+
+COPY poc/xfce4-panel.xml \
+    /home/preview/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+RUN chown -R preview:preview /home/preview/.config
+RUN echo 'export DBUS_SESSION_BUS_ADDRESS="$(cat "$XDG_RUNTIME_DIR/bus-address" 2>/dev/null)"' \
+    > /etc/profile.d/preview-session-bus.sh
+
+# Fixture servers: one generic server installed under the command-line
+# layouts the application under test recognizes (see its detection
+# catalog). The code is identical; only the path and arguments differ.
+COPY poc/fixtures/fixture.js poc/fixtures/fixture.py /tmp/preview-fixtures/
+RUN set -e; \
+    for p in next/dist/bin/next astro/astro.js vite/bin/vite.js \
+        nuxt/bin/nuxt.mjs @angular/cli/bin/ng.js @nestjs/cli/bin/nest.js \
+        @remix-run/dev/dist/cli.js storybook/dist/bin/dispatcher.js \
+        expo/bin/cli; do \
+        install -D /tmp/preview-fixtures/fixture.js \
+            "/opt/fixtures/node_modules/$p"; \
+    done; \
+    install -D /tmp/preview-fixtures/fixture.py /opt/fixtures/manage.py; \
+    install -m 644 /tmp/preview-fixtures/fixture.py /bin/uvicorn; \
+    install -m 644 /tmp/preview-fixtures/fixture.py /bin/flask; \
+    install -m 644 /tmp/preview-fixtures/fixture.py /bin/gunicorn; \
+    rm -rf /tmp/preview-fixtures
+
+COPY poc/start-xfce.sh /usr/local/bin/start-xfce
+
+USER preview
+ENV DISPLAY=:0
+ENV NO_AT_BRIDGE=1
+ENV XDG_RUNTIME_DIR=/home/preview/.run
+
+EXPOSE 6080
+
+ENTRYPOINT ["dbus-run-session", "--", "/usr/local/bin/start-xfce"]
